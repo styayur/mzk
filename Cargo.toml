@@ -1,0 +1,38 @@
+[package]
+name = "mzk"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "A headless, one-command music launcher using the official Jamendo API"
+repository = "https://github.com/styayur/mzk"
+authors = ["styayur"]
+default-run = "mzk"
+
+[features]
+test-support = []
+
+[[bin]]
+name = "mzk-test-player"
+path = "tests/support/player.rs"
+required-features = ["test-support"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "process"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "query"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+rand = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Pipes", "Win32_System_Threading", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Memory"] }
+
+[dev-dependencies]
+tempfile = "3"
