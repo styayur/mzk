@@ -119,6 +119,26 @@ pub fn fragment(text: &str, rng: &mut impl rand::Rng) -> Option<String> {
 mod tests {
     use super::*;
     use rand::{SeedableRng, rngs::StdRng};
+
+    #[test]
+    #[ignore = "opt-in release-mode CPU measurement, no network or player"]
+    fn scoring_measurement() {
+        let tracks: Vec<_> = (0..40)
+            .map(|i| Track::fixture(&i.to_string(), &format!("Clair de lune piano {i}")))
+            .collect();
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut samples = Vec::new();
+        for _ in 0..100 {
+            let start = std::time::Instant::now();
+            std::hint::black_box(choose("Clair de lune", &tracks, &mut rng));
+            samples.push(start.elapsed().as_micros());
+        }
+        samples.sort_unstable();
+        eprintln!(
+            "scoring candidates=40 samples=100 p50_us={} p95_us={}",
+            samples[49], samples[94]
+        );
+    }
     #[test]
     fn unicode_ranking() {
         assert_eq!(normalize("Ｃafé E\u{301}"), "café é");

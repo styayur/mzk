@@ -10,6 +10,10 @@ async fn main() {
         println!("mpv 0.40.0");
         return;
     }
+    if args.get(1).is_some_and(|a| a == "--orphan") {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        return;
+    }
     if args.get(1).is_some_and(|a| a == "--launch") {
         let p = mzk::player::Player::isolated(PathBuf::from(&args[2]), PathBuf::from(&args[3]));
         match p.play(&args[4]).await {

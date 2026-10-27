@@ -4,7 +4,7 @@ Report a suspected vulnerability privately to **yurstya@gmail.com**, identifying
 
 Trust your mpv installation and current user session. IPC can control all mpv commands; it is not an authorization boundary against the same user or administrators. Only official API-provided, validated HTTPS Jamendo stream URLs are selected. mpv handles redirects and decoding, so its security updates matter independently. Local malicious binaries, compromised providers and physical audio output are not verified by mzk.
 
-Runtime directories contain only launch.lock and player.json, plus Linux sockets. Do not edit state while a launcher is running. An alive recorded process with broken IPC fails closed; inspect it before terminating **only that process** through your OS. Never run `taskkill /IM mpv.exe` or `pkill mpv` as recovery.
+Runtime directories contain only launch.lock and player.json, plus Linux sockets. Do not edit state while a launcher is running. Broken IPC is recovered only after creation identity and executable are rechecked on a process-bound handle. A conflicting identity fails closed; inspect it before terminating **only that process** through your OS. Never run `taskkill /IM mpv.exe` or `pkill mpv` as recovery.
 
 PowerShell, read-only identification:
 
@@ -28,10 +28,10 @@ import json, os, pathlib, tempfile
 root = pathlib.Path(os.environ.get('XDG_RUNTIME_DIR', tempfile.gettempdir()))
 p = root / ('mzk-' + str(os.geteuid())) / 'player.json'
 s = json.loads(p.read_text())
-print('PID:', s['pid'], 'start ticks:', s['birth'], 'endpoint token:', s['token'])
+print('PID:', s['pid'], 'boot ID:start ticks:', s['birth'], 'endpoint token:', s['token'])
 PY
 # Substitute the printed PID; inspect creation identity and endpoint before acting:
 ps -p RECORDED_PID -o pid,lstart,args
 ```
 
-`/proc/RECORDED_PID/stat` field 22 (after parsing the parenthesized command name) must equal state.birth. Use the OS process manager for that exact verified process. After it has exited, the next `mzk p` removes stale metadata. For corrupt JSON, inspect all processes with the exact mzk IPC argument first; only after confirming none are running should you move player.json aside and retry. Do not remove launch.lock while another launcher may hold it.
+`/proc/RECORDED_PID/stat` field 22 (after parsing the parenthesized command name), prefixed by `/proc/sys/kernel/random/boot_id` and a colon, must equal state.birth. Use the OS process manager for that exact verified process. After it has exited, the next `mzk p` removes stale metadata. For corrupt JSON, inspect all processes with the exact mzk IPC argument first; only after confirming none are running should you move player.json aside and retry. Do not remove launch.lock while another launcher may hold it.
