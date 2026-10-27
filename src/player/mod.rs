@@ -177,7 +177,13 @@ impl Player {
     pub async fn play(&self, url: &str) -> Result<Playback> {
         let _guard = self.lock()?;
         if let Some(state) = self.read_state()? {
-            if platform::birth(state.pid).is_ok_and(|b| b == state.birth) {
+            let identity = platform::birth(state.pid);
+            if identity.is_err() && !platform::definitely_exited(state.pid) {
+                bail!(
+                    "cannot establish whether the recorded player exited; refusing a second player"
+                );
+            }
+            if identity.is_ok_and(|b| b == state.birth) {
                 let connection = timeout(Duration::from_secs(1), self.verified(&state)).await;
                 if let Ok(Ok(mut ipc)) = connection {
                     let result = timeout(CONFIRM, async {

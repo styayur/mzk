@@ -129,6 +129,31 @@ pub fn birth(pid: u32) -> Result<String> {
     }
 }
 
+// An identity lookup error is not proof of exit (for example, permission denied).
+pub fn definitely_exited(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat
+                .rsplit_once(')')
+                .is_some_and(|(_, rest)| rest.split_whitespace().next() == Some("Z")),
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        }
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::{Foundation::*, System::Threading::*};
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return GetLastError() == ERROR_INVALID_PARAMETER;
+        }
+        let mut code = 0;
+        let exited = GetExitCodeProcess(h, &mut code) != 0 && code != 259;
+        CloseHandle(h);
+        exited
+    }
+}
+
 pub fn detached(command: &mut Command) {
     #[cfg(windows)]
     {
