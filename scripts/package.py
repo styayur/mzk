@@ -19,7 +19,7 @@ metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', 
 inventory = [{k: p.get(k) for k in ('name', 'version', 'license', 'repository')} for p in metadata['packages']]
 name = f'mzk-{version}-{platform}'
 archive = dist / (name + '.zip')
-with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
+with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
     z.write(binary, f'{name}/{exe}')
     for rel in ('README.md', 'README.zh-CN.md', 'LICENSE', 'SECURITY.md', 'THIRD_PARTY.md', 'CHANGELOG.md', '.env.example', 'Cargo.lock'):
         z.write(ROOT / rel, f'{name}/{rel}')

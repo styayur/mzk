@@ -115,15 +115,42 @@ pub fn birth(pid: u32) -> Result<String> {
         if rest.split_whitespace().next() == Some("Z") {
             bail!("process has exited");
         }
-        Ok(rest
+        let start = rest
             .split_whitespace()
             .nth(19)
-            .context("missing starttime")?
-            .into())
+            .context("missing starttime")?;
+        let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+            .context("boot identity unavailable")?;
+        Ok(format!("{}:{start}", boot.trim()))
     }
     #[cfg(windows)]
     {
         win::birth(pid)
+    }
+}
+
+// An identity lookup error is not proof of exit (for example, permission denied).
+pub fn definitely_exited(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat
+                .rsplit_once(')')
+                .is_some_and(|(_, rest)| rest.split_whitespace().next() == Some("Z")),
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        }
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::{Foundation::*, System::Threading::*};
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return GetLastError() == ERROR_INVALID_PARAMETER;
+        }
+        let mut code = 0;
+        let exited = GetExitCodeProcess(h, &mut code) != 0 && code != 259;
+        CloseHandle(h);
+        exited
     }
 }
 
@@ -213,10 +240,65 @@ pub fn spawn(executable: &Path, args: &[String]) -> Result<Child> {
     }
 }
 
+// Recover an inaccessible managed IPC endpoint only after rechecking identity on
+// a process-bound handle. Never signal a bare saved PID or a process name.
+pub fn retire(pid: u32, expected_birth: &str, executable: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+        if raw < 0 {
+            bail!(
+                "cannot bind stale player identity; Linux pidfd support is required for recovery"
+            );
+        }
+        let handle = unsafe { OwnedFd::from_raw_fd(raw as i32) };
+        use std::os::unix::fs::MetadataExt;
+        let actual = std::fs::metadata(format!("/proc/{pid}/exe"))?;
+        let expected = std::fs::metadata(executable)?;
+        // Cargo and package managers may launch a hardlink whose kernel-reported
+        // pathname differs. Compare the actual file identity, not path spelling.
+        if birth(pid)? != expected_birth {
+            bail!("stale player generation mismatch; refusing termination");
+        }
+        if actual.dev() != expected.dev() || actual.ino() != expected.ino() {
+            bail!("stale player executable identity mismatch; refusing termination");
+        }
+        if unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                handle.as_raw_fd(),
+                libc::SIGTERM,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        } != 0
+        {
+            bail!("cannot retire stale managed player");
+        }
+        let mut poll = libc::pollfd {
+            fd: handle.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut poll, 1, 2000) } <= 0 {
+            bail!("stale player has not exited; refusing a second player");
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        win::retire(pid, expected_birth, executable)
+    }
+}
+
 #[cfg(windows)]
 mod win {
     use super::*;
-    use std::{os::windows::ffi::OsStrExt, ptr};
+    use std::{
+        os::windows::ffi::{OsStrExt, OsStringExt},
+        ptr,
+    };
     use windows_sys::Win32::{
         Foundation::*, Security::Authorization::*, Security::*, Storage::FileSystem::*,
         System::Threading::*,
@@ -296,6 +378,50 @@ mod win {
                 pid: process.dwProcessId,
             })
         }
+    }
+
+    pub fn retire(pid: u32, expected_birth: &str, executable: &Path) -> Result<()> {
+        unsafe {
+            let h = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE,
+                0,
+                pid,
+            );
+            if h.is_null() {
+                bail!("cannot bind stale player identity");
+            }
+            // Retain the same process handle through validation and termination.
+            let child = Child { handle: h, pid };
+            let mut creation: FILETIME = std::mem::zeroed();
+            let mut exit = creation;
+            let mut kernel = creation;
+            let mut user = creation;
+            if GetProcessTimes(h, &mut creation, &mut exit, &mut kernel, &mut user) == 0
+                || format!("{}:{}", creation.dwHighDateTime, creation.dwLowDateTime)
+                    != expected_birth
+            {
+                bail!("stale player generation mismatch; refusing termination");
+            }
+            let mut path = vec![0u16; 32768];
+            let mut len = path.len() as u32;
+            if QueryFullProcessImageNameW(h, 0, path.as_mut_ptr(), &mut len) == 0 {
+                bail!("cannot identify stale player executable");
+            }
+            let actual = PathBuf::from(std::ffi::OsString::from_wide(&path[..len as usize]));
+            if !std::fs::canonicalize(actual)?
+                .as_os_str()
+                .eq_ignore_ascii_case(std::fs::canonicalize(executable)?.as_os_str())
+            {
+                bail!("stale player executable mismatch; refusing termination");
+            }
+            if TerminateProcess(h, 1) == 0 {
+                bail!("cannot retire stale managed player");
+            }
+            if WaitForSingleObject(child.handle, 2000) != WAIT_OBJECT_0 {
+                bail!("stale player has not exited; refusing a second player");
+            }
+        }
+        Ok(())
     }
 
     pub fn birth(pid: u32) -> Result<String> {

@@ -20,8 +20,10 @@ struct State {
     pid: u32,
     birth: String,
     token: String,
+    executable: PathBuf,
 }
 
+#[derive(Debug)]
 pub struct Playback {
     pub reused: bool,
     pub launch_ms: u128,
@@ -115,7 +117,8 @@ impl Player {
         }
         let state: State = serde_json::from_slice(&std::fs::read(path)?)
             .context("invalid runtime state; inspect player.json manually")?;
-        if state.token.len() != 32
+        if !state.executable.is_absolute()
+            || state.token.len() != 32
             || !state.token.bytes().all(|c| c.is_ascii_hexdigit())
             || state.pid == 0
         {
@@ -174,23 +177,33 @@ impl Player {
     pub async fn play(&self, url: &str) -> Result<Playback> {
         let _guard = self.lock()?;
         if let Some(state) = self.read_state()? {
-            if platform::birth(state.pid).is_ok_and(|b| b == state.birth) {
-                let result = timeout(CONFIRM, async {
-                    let mut ipc = self.verified(&state).await?;
-                    let start = Instant::now();
-                    ipc.replace(url).await?;
-                    Self::ready(&mut ipc, url).await?;
-                    Ok::<_, anyhow::Error>(Playback {
-                        reused: true,
-                        launch_ms: 0,
-                        confirm_ms: start.elapsed().as_millis(),
+            let identity = platform::birth(state.pid);
+            if identity.is_err() && !platform::definitely_exited(state.pid) {
+                bail!(
+                    "cannot establish whether the recorded player exited; refusing a second player"
+                );
+            }
+            if identity.is_ok_and(|b| b == state.birth) {
+                let connection = timeout(Duration::from_secs(1), self.verified(&state)).await;
+                if let Ok(Ok(mut ipc)) = connection {
+                    let result = timeout(CONFIRM, async {
+                        let start = Instant::now();
+                        ipc.replace(url).await?;
+                        Self::ready(&mut ipc, url).await?;
+                        Ok::<_, anyhow::Error>(Playback {
+                            reused: true,
+                            launch_ms: 0,
+                            confirm_ms: start.elapsed().as_millis(),
+                        })
                     })
-                })
-                .await
-                .context(
-                    "mpv replacement confirmation timed out; previous track may have stopped",
-                )?;
-                return result.context("managed player is alive but replacement failed; inspect its PID before retrying");
+                    .await
+                    .context(
+                        "mpv replacement confirmation timed out; previous track may have stopped",
+                    )?;
+                    return result.context("managed player is alive but replacement failed; inspect its PID before retrying");
+                }
+                platform::retire(state.pid, &state.birth, &state.executable)
+                    .context("cannot safely recover stale IPC; inspect the recorded process")?;
             }
             self.clear(&state)?;
         }
@@ -238,6 +251,7 @@ impl Player {
                 pid: child.id(),
                 birth: platform::birth(child.id())?,
                 token,
+                executable: std::fs::canonicalize(&self.executable)?,
             };
             std::fs::write(self.dir.join("player.json"), serde_json::to_vec(&state)?)?;
             let confirm = Instant::now();

@@ -71,9 +71,9 @@ cargo build --release --locked --bin mzk
 
 Jamendo 的独立音乐曲库不等于主流音乐曲库。字符匹配可能产生意外选择或无结果；小写映射并非完整 Unicode case folding。未知许可、缺失署名、非 HTTPS 或非 Jamendo 流地址会被保守拒绝。是否实际可播放由 mpv 状态确认。
 
-切歌直接替换当前曲目，失败可能中断旧曲，不保证回滚、无缝切换。记录的进程仍存活而 IPC 无法验证时，会报错并要求检查该 PID，不启动另一个长期播放器。进程已退出或 PID 代际改变时，下次调用清理旧状态。损坏的 JSON 留给用户检查，不自动猜测归属。
+切歌直接替换当前曲目，失败可能中断旧曲，不保证回滚、无缝切换。受管 IPC 失效时，只有在绑定进程的系统句柄上重新核对创建身份及可执行文件后，才结束旧播放器并重建；身份冲突时拒绝操作。进程已退出或 PID 代际改变时，下次调用清理旧状态。损坏的 JSON 留给用户检查，不自动猜测归属。
 
-仅保存 `player.json`（PID、创建身份、随机端点 token）及 `launch.lock`，Windows 位于 `%LOCALAPPDATA%\mzk`，Linux 位于 `$XDG_RUNTIME_DIR/mzk-UID`，未设置时使用系统临时目录；Linux 另有临时 socket。不保存搜索、曲目元数据或音频。mpv 仅做内存缓冲；查询和客户端 ID 直接发送给 Jamendo，mpv 直接访问音源服务器，提供方可看到网络元数据。
+仅保存 `player.json`（PID、创建身份、可执行文件路径、随机端点 token）及 `launch.lock`，Windows 位于 `%LOCALAPPDATA%\mzk`，Linux 位于 `$XDG_RUNTIME_DIR/mzk-UID`，未设置时使用系统临时目录；Linux 另有临时 socket。不保存搜索、曲目元数据或音频。mpv 仅做内存缓冲；查询和客户端 ID 直接发送给 Jamendo，mpv 直接访问音源服务器，提供方可看到网络元数据。
 
 IPC 以可信的当前用户会话为边界。运行目录受权限保护；mpv >=0.40 的 Windows 管道限当前用户并拒绝远程访问；Linux 使用 0700 目录及 Unix socket。PID、创建身份、系统端点 PID 与 mpv 自报 PID 必须一致。管理员、恶意同用户进程及不可信 mpv 不在防护范围内。进程创建后、状态落盘前崩溃可能留下未登记播放器，须按 IPC token 精确识别。参见[安全与恢复说明](SECURITY.md)，不要按名称批量终止 mpv。
 
