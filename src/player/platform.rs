@@ -258,11 +258,11 @@ pub fn retire(pid: u32, expected_birth: &str, executable: &Path) -> Result<()> {
         let expected = std::fs::metadata(executable)?;
         // Cargo and package managers may launch a hardlink whose kernel-reported
         // pathname differs. Compare the actual file identity, not path spelling.
-        if birth(pid)? != expected_birth
-            || actual.dev() != expected.dev()
-            || actual.ino() != expected.ino()
-        {
-            bail!("stale player identity mismatch; refusing termination");
+        if birth(pid)? != expected_birth {
+            bail!("stale player generation mismatch; refusing termination");
+        }
+        if actual.dev() != expected.dev() || actual.ino() != expected.ino() {
+            bail!("stale player executable identity mismatch; refusing termination");
         }
         if unsafe {
             libc::syscall(
