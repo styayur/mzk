@@ -228,9 +228,14 @@ pub fn retire(pid: u32, expected_birth: &str, executable: &Path) -> Result<()> {
             );
         }
         let handle = unsafe { OwnedFd::from_raw_fd(raw as i32) };
+        use std::os::unix::fs::MetadataExt;
+        let actual = std::fs::metadata(format!("/proc/{pid}/exe"))?;
+        let expected = std::fs::metadata(executable)?;
+        // Cargo and package managers may launch a hardlink whose kernel-reported
+        // pathname differs. Compare the actual file identity, not path spelling.
         if birth(pid)? != expected_birth
-            || std::fs::canonicalize(format!("/proc/{pid}/exe"))?
-                != std::fs::canonicalize(executable)?
+            || actual.dev() != expected.dev()
+            || actual.ino() != expected.ino()
         {
             bail!("stale player identity mismatch; refusing termination");
         }
