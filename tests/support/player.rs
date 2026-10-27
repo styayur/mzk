@@ -11,6 +11,7 @@ async fn main() {
         return;
     }
     if args.get(1).is_some_and(|a| a == "--orphan") {
+        std::fs::write(&args[2], b"ready").unwrap();
         tokio::time::sleep(Duration::from_secs(30)).await;
         return;
     }

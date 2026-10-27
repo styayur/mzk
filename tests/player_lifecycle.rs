@@ -97,28 +97,40 @@ async fn stale_state_never_controls_an_unrelated_process() {
 
 #[tokio::test]
 async fn live_stale_endpoint_retires_only_verified_owned_generation() {
-    let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().join("run");
-    platform::secure_dir(&dir).unwrap();
-    let exe = env!("CARGO_BIN_EXE_mzk-test-player");
-    let mut orphan = Command::new(exe)
-        .arg("--orphan")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+    for _ in 0..5 {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("run");
+        platform::secure_dir(&dir).unwrap();
+        let exe = env!("CARGO_BIN_EXE_mzk-test-player");
+        let ready = temp.path().join("orphan-ready");
+        let mut orphan = Command::new(exe)
+            .arg("--orphan")
+            .arg(&ready)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        // Model a previously launched player, not a child still traversing exec.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !ready.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
         .unwrap();
-    let pid = orphan.id();
-    let state = serde_json::json!({"pid":pid, "birth":platform::birth(pid).unwrap(), "token":"0123456789abcdef0123456789abcdef", "executable":std::fs::canonicalize(exe).unwrap()});
-    std::fs::write(dir.join("player.json"), state.to_string()).unwrap();
-    let player = Player::isolated(exe.into(), dir.clone());
-    let result = player.play("replacement").await.unwrap();
-    assert!(!result.reused);
-    assert!(orphan.try_wait().unwrap().is_some());
-    let next: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(dir.join("player.json")).unwrap()).unwrap();
-    assert_ne!(next["pid"].as_u64().unwrap(), pid as u64);
-    tokio::time::sleep(Duration::from_secs(4)).await;
+        let pid = orphan.id();
+        let state = serde_json::json!({"pid":pid, "birth":platform::birth(pid).unwrap(), "token":"0123456789abcdef0123456789abcdef", "executable":std::fs::canonicalize(exe).unwrap()});
+        std::fs::write(dir.join("player.json"), state.to_string()).unwrap();
+        let player = Player::isolated(exe.into(), dir.clone());
+        let result = player.play("replacement").await.unwrap();
+        assert!(!result.reused);
+        assert!(orphan.try_wait().unwrap().is_some());
+        let next: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("player.json")).unwrap()).unwrap();
+        assert_ne!(next["pid"].as_u64().unwrap(), pid as u64);
+        tokio::time::sleep(Duration::from_secs(4)).await;
+    }
 }
 
 #[tokio::test]
